@@ -40,6 +40,7 @@ struct Snapshot {
 }
 type State = Rc<RefCell<Ui>>;
 struct Ui {
+    panel: gtk::Box,
     config: Config,
     stack: gtk::Stack,
     agenda: gtk::Box,
@@ -253,6 +254,26 @@ fn settings(state: &State) {
     clear(&ui.settings);
     ui.settings.append(&label("Make it yours.", "title"));
     let r = row(12);
+    let text = label("Top margin (px)", "subtitle");
+    text.set_hexpand(true);
+    r.append(&text);
+    let margin = gtk::SpinButton::with_range(0., 500., 1.);
+    margin.set_value(ui.config.top_margin.into());
+    margin.set_tooltip_text(Some(
+        "Distance from the top of the screen in logical pixels",
+    ));
+    r.append(&margin);
+    ui.settings.append(&r);
+    let st = state.clone();
+    margin.connect_value_changed(move |spin| {
+        {
+            let mut ui = st.borrow_mut();
+            ui.config.top_margin = spin.value_as_int() as u32;
+            ui.panel.set_margin_top(spin.value_as_int());
+        }
+        persist(&st);
+    });
+    let r = row(12);
     let text = label("Days ahead", "subtitle");
     text.set_hexpand(true);
     r.append(&text);
@@ -399,7 +420,7 @@ fn build(app: &gtk::Application, config: Config, focused: bool) {
     panel.add_css_class("panel");
     panel.set_halign(gtk::Align::End);
     panel.set_valign(gtk::Align::Start);
-    panel.set_margin_top(24);
+    panel.set_margin_top(config.top_margin as i32);
     panel.set_margin_end(16);
     panel.set_margin_bottom(16);
     panel.set_size_request(480, -1);
@@ -457,6 +478,7 @@ fn build(app: &gtk::Application, config: Config, focused: bool) {
     window.set_child(Some(&overlay));
     let gtk_settings = gtk::Settings::default();
     let state = Rc::new(RefCell::new(Ui {
+        panel,
         config,
         stack,
         agenda,

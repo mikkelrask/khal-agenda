@@ -5,6 +5,7 @@ use std::path::PathBuf;
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
+    pub top_margin: u32,
     pub days_ahead: u32,
     pub month_view: bool,
     pub theme: String,
@@ -16,6 +17,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             days_ahead: 7,
+            top_margin: 24,
             month_view: false,
             theme: "system".into(),
             excluded: vec![],
@@ -34,6 +36,9 @@ impl Config {
             .join("khal-agenda/config.toml")
     }
     pub fn validate(&self) -> Result<()> {
+        if self.top_margin > 500 {
+            bail!("Top margin must be between 0 and 500 pixels");
+        }
         if self.days_ahead > 90 {
             bail!("Days ahead must be between 0 and 90");
         }

@@ -113,3 +113,7 @@ Quit any existing instance first. The live test uses temporary settings and
 synthetic calendars, and exits the popup when finished.
 
 MIT licensed.
+
+The **Top margin (px)** setting positions the popup below your bar. It accepts
+0–500 logical pixels, applies immediately, and is saved as `top_margin` in the
+app configuration. The default is 24 pixels.

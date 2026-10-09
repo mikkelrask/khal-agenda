@@ -83,7 +83,12 @@ with tempfile.TemporaryDirectory(prefix="khal-agenda-smoke-") as directory:
         switch = next(n for n in walk(name.get_parent()) if n.get_role_name() == "switch")
         assert switch.get_action_iface().do_action(0)
         wait(lambda: tomllib.loads(config.read_text()).get("month_view"), "Month setting did not persist")
-        spin = wait(lambda: find(role="spin button"), "Days control did not appear")
+        margin_label = wait(lambda: find("Top margin (px)", "label"), "Margin control did not appear")
+        margin = next(n for n in walk(margin_label.get_parent()) if n.get_role_name() == "spin button")
+        assert margin.get_value_iface().set_current_value(72)
+        wait(lambda: tomllib.loads(config.read_text()).get("top_margin") == 72, "Margin did not persist")
+        days_label = find("Days ahead", "label")
+        spin = next(n for n in walk(days_label.get_parent()) if n.get_role_name() == "spin button")
         assert spin.get_value_iface().set_current_value(0)
         wait(lambda: tomllib.loads(config.read_text()).get("days_ahead") == 0, "Days ahead did not persist")
         click("Done")
@@ -99,7 +104,7 @@ with tempfile.TemporaryDirectory(prefix="khal-agenda-smoke-") as directory:
             import json
             monitor = next(m for m in json.loads(subprocess.check_output(["mmsg", "get", "all-monitors"], text=True))["monitors"] if m["active"])
             x = monitor["x"] + monitor["width"] - rect.width - 16
-            subprocess.run(["grim", "-g", f'{x},{monitor["y"]+24} {rect.width}x{rect.height}', os.environ["KHAL_AGENDA_SCREENSHOT"]], check=True)
+            subprocess.run(["grim", "-g", f'{x},{monitor["y"]+72} {rect.width}x{rect.height}', os.environ["KHAL_AGENDA_SCREENSHOT"]], check=True)
         backdrop = find("", "button")
         assert backdrop.get_action_iface().do_action(0)
         process.wait(timeout=5)
