@@ -36,6 +36,19 @@ with khal 0.14.1. It uses khal's collection and recurrence APIs, so future khal
 API changes may require a backend update. Python and khal are runtime
 dependencies, not bundled in the binary.
 
+## Release downloads
+
+[GitHub releases](https://github.com/mikkelrask/khal-agenda/releases) provide
+Linux x86_64 archives and SHA256 checksums. Install GTK4, Python 3, and khal
+first, then extract the archive into `~/.local` (or `/usr/local` for a system
+install). The archive includes gtk4-layer-shell and its license. GitHub builds
+require glibc 2.39 or newer and GTK4 4.8 or newer; build from source on older
+systems. Ensure `~/.local/bin` is on your PATH.
+
+Version tags matching Cargo.toml, such as `v0.1.0`, run the checks, build the
+archive, and publish a release only after the checks succeed. Main builds also
+provide downloadable workflow artifacts.
+
 ## Calendars
 
 Use your existing khal configuration. If `khal list today` works, the popup
