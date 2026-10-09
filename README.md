@@ -36,6 +36,13 @@ with khal 0.14.1. It uses khal's collection and recurrence APIs, so future khal
 API changes may require a backend update. Python and khal are runtime
 dependencies, not bundled in the binary.
 
+On Arch, the prebuilt release is also available as
+[`khal-agenda-bin`](https://aur.archlinux.org/packages/khal-agenda-bin):
+
+```sh
+paru -S khal-agenda-bin
+```
+
 ## Release downloads
 
 [GitHub releases](https://github.com/mikkelrask/khal-agenda/releases) provide
@@ -47,7 +54,10 @@ systems. Ensure `~/.local/bin` is on your PATH.
 
 Version tags matching Cargo.toml, such as `v0.1.0`, run the checks, build the
 archive, and publish a release only after the checks succeed. Main builds also
-provide downloadable workflow artifacts.
+provide downloadable workflow artifacts. The sibling `../khal-agenda-bin`
+repository maintains the AUR package: after each release finishes successfully,
+pin its published archive checksum, update the version and `.SRCINFO`, run a
+clean `makepkg` build, and push the package update to AUR.
 
 ## Calendars
 
