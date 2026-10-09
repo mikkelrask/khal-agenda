@@ -4,12 +4,9 @@ An on-demand Wayland calendar popup for khal. Run `khal-agenda`, read the next f
 days, and click outside or press Escape to close it. The process exits when the
 popup closes. No tray, daemon, polling, sync service, or autostart entry.
 
-The UI uses Rust, GTK4, and gtk4-layer-shell, matching Mango Layout Tray. It
-supports compositors with the Wayland layer-shell protocol. On MangoWM it
-opens on the monitor under the pointer, with focused-monitor fallback;
-`--focused` targets the focused monitor. On other compositors, output selection
-is left to the compositor. Events
-are grouped by day; click an event to expand its description and location.
+The UI uses Rust, GTK4, and gtk4-layer-shell. It supports Wayland compositors
+with the layer-shell protocol. Events are grouped by day; click an event to
+expand its description and location.
 
 Settings offers calendar toggles, GTK/light/dark themes, days ahead (0–90), and
 an optional month calendar. Today is always included, so “7 days ahead” shows
@@ -75,24 +72,9 @@ In Waybar's existing clock module, add:
 "on-click": "khal-agenda"
 ```
 
-For a Mango keyboard binding, choose an unused combination:
-
-```ini
-bind=SUPER+SHIFT,c,spawn,khal-agenda --focused
-```
-
-Do not add the app to `exec-once`. It runs only when invoked. Repeated launches
-reuse the open popup. The graphical environment and session bus must be present;
-Mango's IPC is optional and only improves monitor selection on MangoWM.
-Other layer-shell compositors work without it. Run `khal-agenda` from your
-compositor's shortcut configuration or any panel that can launch a command.
-
-If Mango applies blur or shadows to the transparent overlay, add this scoped
-rule and reload your config:
-
-```ini
-layerrule=noblur:1,noshadow:1,layer_name:^khal-agenda$
-```
+For a keyboard shortcut, bind `khal-agenda` in your compositor's configuration.
+The app runs only when invoked, and repeated launches reuse the open popup.
+The graphical environment and session bus must be present.
 
 ## Preferences
 
@@ -121,7 +103,7 @@ GitHub Actions checks the source and backend fixtures on Ubuntu 24.04.
 
 Backend fixtures cover recurring events, local timezone conversion, exclusive
 all-day end dates, zero days ahead, and excluding every calendar. Use a real
-Wayland session (the smoke test screenshot option uses Mango IPC) to verify the overlay and outside-click dismissal:
+Wayland session to verify the overlay and outside-click dismissal:
 
 ```sh
 python3 scripts/live-smoke.py
