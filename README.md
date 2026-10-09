@@ -1,0 +1,110 @@
+# Khal Agenda
+
+An on-demand Wayland calendar popup for khal. Run `khal-agenda`, read the next few
+days, and click outside or press Escape to close it. The process exits when the
+popup closes. No tray, daemon, polling, sync service, or autostart entry.
+
+The UI uses Rust, GTK4, and gtk4-layer-shell, matching Mango Layout Tray. It
+supports compositors with the Wayland layer-shell protocol. On MangoWM it
+opens on the monitor under the pointer, with focused-monitor fallback;
+`--focused` targets the focused monitor. On other compositors, output selection
+is left to the compositor. Events
+are grouped by day; click an event to expand its description and location.
+
+Settings offers calendar toggles, GTK/light/dark themes, days ahead (0–90), and
+an optional month calendar. Today is always included, so “7 days ahead” shows
+eight dates. Selecting a date in the month calendar starts the agenda there;
+Today resets it. Refresh rereads the synced files.
+
+![Optional month view above the agenda, shown with synthetic events](docs/screenshots/calendar.png)
+
+## Install
+
+Install Rust 1.92+, GTK4, gtk4-layer-shell, Python 3, and khal. On Arch:
+
+```sh
+sudo pacman -S rust base-devel gtk4 gtk4-layer-shell python khal
+cargo build --release --locked
+make install
+```
+
+`make install` defaults to `~/.local`; ensure `~/.local/bin` is on your PATH.
+For a system install, use `sudo make install PREFIX=/usr/local`.
+
+The Python interpreter must be able to import khal. The backend has been tested
+with khal 0.14.1. It uses khal's collection and recurrence APIs, so future khal
+API changes may require a backend update. Python and khal are runtime
+dependencies, not bundled in the binary.
+
+## Calendars
+
+Use your existing khal configuration. If `khal list today` works, the popup
+uses the same calendars, timezone, time format, and khal cache. vdirsyncer remains
+responsible for syncing `~/calendars`; the app does not edit or sync events.
+Recurrences appear on each relevant day, and multi-day events appear on each day
+they overlap. Calendar toggle selections are saved separately from khal.
+
+## Open from a panel or keyboard shortcut
+
+In Waybar's existing clock module, add:
+
+```json
+"on-click": "khal-agenda"
+```
+
+For a Mango keyboard binding, choose an unused combination:
+
+```ini
+bind=SUPER+SHIFT,c,spawn,khal-agenda --focused
+```
+
+Do not add the app to `exec-once`. It runs only when invoked. Repeated launches
+reuse the open popup. The graphical environment and session bus must be present;
+Mango's IPC is optional and only improves monitor selection on MangoWM.
+Other layer-shell compositors work without it. Run `khal-agenda` from your
+compositor's shortcut configuration or any panel that can launch a command.
+
+If Mango applies blur or shadows to the transparent overlay, add this scoped
+rule and reload your config:
+
+```ini
+layerrule=noblur:1,noshadow:1,layer_name:^khal-agenda$
+```
+
+## Preferences
+
+Settings saves to `~/.config/khal-agenda/config.toml` (or `XDG_CONFIG_HOME`).
+Optional advanced settings can select another khal config or a Python virtualenv:
+
+```toml
+khal_config = "/absolute/path/to/khal/config"
+python = "/absolute/path/to/venv/bin/python"
+```
+
+An empty agenda and a backend failure are shown separately. Calendar reads run
+asynchronously and are cancelled when replaced or when the app closes. Reads
+are bounded to 20 seconds. Only one backend process runs per app instance.
+
+## Development
+
+```sh
+cargo fmt --check
+cargo clippy --all-targets -- -D warnings
+cargo test
+python3 -m unittest discover -s tests
+```
+
+GitHub Actions checks the source and backend fixtures on Ubuntu 24.04.
+
+Backend fixtures cover recurring events, local timezone conversion, exclusive
+all-day end dates, zero days ahead, and excluding every calendar. Use a real
+Wayland session (the smoke test screenshot option uses Mango IPC) to verify the overlay and outside-click dismissal:
+
+```sh
+python3 scripts/live-smoke.py
+```
+
+Quit any existing instance first. The live test uses temporary settings and
+synthetic calendars, and exits the popup when finished.
+
+MIT licensed.

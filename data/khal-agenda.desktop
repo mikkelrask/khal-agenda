@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Khal Agenda
+Comment=Your synced calendars in an on-demand popup
+Exec=khal-agenda
+Icon=khal-agenda
+Terminal=false
+Categories=Office;Calendar;

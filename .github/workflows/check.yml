@@ -1,0 +1,21 @@
+name: Check
+on: [push, pull_request]
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - run: .github/scripts/setup-linux.sh
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --check
+      - run: cargo clippy --locked --all-targets -- -D warnings
+      - run: cargo test --locked
+      - run: |
+          sudo apt-get install -y python3-venv
+          python3 -m venv /tmp/agenda-tests
+          /tmp/agenda-tests/bin/pip install 'khal==0.14.1'
+          /tmp/agenda-tests/bin/python -m unittest discover -s tests
+      - run: cargo build --release --locked
