@@ -81,7 +81,9 @@ The graphical environment and session bus must be present.
 ![Optional Tasks view, shown with synthetic data](docs/screenshots/tasks.png)
 
 Enable **Tasks** in Settings and choose your todo.txt file with **Browse**, or
-enter a path and click **Apply path**. The default is
+enter a path and click **Apply path**. While the file chooser is open, the
+popup is hidden and releases keyboard focus; choosing a file or cancelling
+returns to Settings. The default is
 `~/Documents/todo/todo.txt`. Tasks are optional and disabled by default.
 The normal launch still opens the agenda. Open tasks directly with:
 

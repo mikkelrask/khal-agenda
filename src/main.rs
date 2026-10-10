@@ -41,6 +41,8 @@ struct Snapshot {
 }
 type State = Rc<RefCell<Ui>>;
 struct Ui {
+    window: gtk::ApplicationWindow,
+    chooser: Option<gtk::FileChooserDialog>,
     tasks_box: gtk::Box,
     tasks_button: gtk::Button,
     document: Option<tasks::Document>,
@@ -512,18 +514,28 @@ fn settings(state: &State) {
     let st = state.clone();
     let st_browse = state.clone();
     let path_input = path.clone();
-    browse.connect_clicked(move |button| {
-        let parent = button.root().and_downcast::<gtk::Window>();
-        let chooser = gtk::FileChooserNative::new(
+    browse.connect_clicked(move |_| {
+        if st_browse.borrow().chooser.is_some() {
+            return;
+        }
+        // Layer surfaces cannot be exported as an xdg-toplevel dialog parent.
+        let chooser = gtk::FileChooserDialog::new(
             Some("Choose todo.txt"),
-            parent.as_ref(),
+            None::<&gtk::Window>,
             gtk::FileChooserAction::Open,
-            Some("Choose"),
-            Some("Cancel"),
+            &[
+                ("Cancel", gtk::ResponseType::Cancel),
+                ("Choose", gtk::ResponseType::Accept),
+            ],
         );
-        let st = st_browse.clone();
+        let path = todo_path(&st_browse.borrow().config.todo_file);
+        let weak = Rc::downgrade(&st_browse);
         let input = path_input.clone();
         chooser.connect_response(move |chooser, response| {
+            let Some(st) = weak.upgrade() else {
+                chooser.destroy();
+                return;
+            };
             if response == gtk::ResponseType::Accept
                 && let Some(path) = chooser.file().and_then(|f| f.path())
             {
@@ -533,8 +545,24 @@ fn settings(state: &State) {
                 persist(&st);
             }
             chooser.destroy();
+            let mut ui = st.borrow_mut();
+            ui.chooser = None;
+            if gtk4_layer_shell::is_supported() {
+                ui.window.set_keyboard_mode(KeyboardMode::Exclusive);
+            }
+            ui.window.present();
         });
-        chooser.show();
+        let mut ui = st_browse.borrow_mut();
+        if gtk4_layer_shell::is_supported() {
+            ui.window.set_keyboard_mode(KeyboardMode::None);
+        }
+        ui.window.hide();
+        ui.chooser = Some(chooser.clone());
+        drop(ui);
+        chooser.present();
+        if let Some(parent) = path.parent() {
+            let _ = chooser.set_current_folder(Some(&gio::File::for_path(parent)));
+        }
     });
     apply.connect_clicked(move |_| {
         st.borrow_mut().config.todo_file = path.text().to_string();
@@ -712,6 +740,8 @@ fn build(app: &gtk::Application, config: Config, focused: bool, open_tasks: bool
     window.set_child(Some(&overlay));
     let gtk_settings = gtk::Settings::default();
     let state = Rc::new(RefCell::new(Ui {
+        window: window.clone(),
+        chooser: None,
         tasks_box,
         tasks_button: tasks_button.clone(),
         document: None,
@@ -884,6 +914,14 @@ fn main() -> glib::ExitCode {
         }
     });
     app.connect_activate(move |app| {
+        if let Some(chooser) = current
+            .borrow()
+            .as_ref()
+            .and_then(|state| state.borrow().chooser.clone())
+        {
+            chooser.present();
+            return;
+        }
         if let Some(window) = app.active_window() {
             window.present();
         } else {

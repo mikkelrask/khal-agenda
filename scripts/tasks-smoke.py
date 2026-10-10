@@ -68,10 +68,24 @@ with tempfile.TemporaryDirectory(prefix='khal-tasks-smoke-') as tmp:
             click('Settings');wait(lambda:find('Enable tasks'))
             text=find('Enable tasks');switch=next(n for n in walk(text.get_parent()) if n.get_role_name()=='switch');assert switch.get_action_iface().do_action(0)
             wait(lambda:tomllib.loads(config.read_text()).get('tasks_enabled'))
+            click('Browse')
+            def chooser_control(name): return find(name,'button')
+            cancel=wait(lambda:chooser_control('Cancel'));assert p.poll() is None
+            assert cancel.get_action_iface().do_action(0)
+            wait(lambda:find('Browse'));assert p.poll() is None
+            alternate=root/'alternate.txt';alternate.write_text('External edit @sync\n')
+            click('Browse')
+            file=wait(lambda:find('alternate.txt','table cell'))
+            row=file.get_parent()
+            assert row.get_parent().get_selection_iface().select_child(row.get_index_in_parent())
+            choose=wait(lambda:(b:=chooser_control('Choose')) and b.get_state_set().contains(Atspi.StateType.SENSITIVE) and b)
+            assert choose.get_action_iface().do_action(0)
+            wait(lambda:find('Browse'));assert p.poll() is None
+            assert tomllib.loads(config.read_text())['todo_file']==str(alternate)
             click('Done');click('Tasks');wait(lambda:input_with('External edit @sync'))
             subprocess.run([str(ROOT/'target/release/khal-agenda'),'--tasks'],env=env,check=True)
             click('Close');p.wait(timeout=5);assert p.returncode==0
         finally:
             if p.poll() is None:p.terminate();p.wait(timeout=5)
     errors=(root/'app.log').read_text();assert 'panicked' not in errors and 'CRITICAL' not in errors,errors
-print('PASS: task edit, completion, reopen, add, external-change protection, refresh, toggle and --tasks activation')
+print('PASS: task edit, completion, reopen, add, external-change protection, refresh, toggle, file chooser cancel/accept and --tasks activation')
