@@ -1,4 +1,5 @@
 mod config;
+mod tasks;
 use config::Config;
 use gtk::{gdk, gio, glib, prelude::*};
 use gtk4_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
@@ -40,6 +41,11 @@ struct Snapshot {
 }
 type State = Rc<RefCell<Ui>>;
 struct Ui {
+    tasks_box: gtk::Box,
+    tasks_button: gtk::Button,
+    document: Option<tasks::Document>,
+    task_filter: String,
+    show_completed: bool,
     panel: gtk::Box,
     config: Config,
     stack: gtk::Stack,
@@ -194,13 +200,15 @@ fn render(ui: &mut Ui, snapshot: Snapshot) {
     ui.calendars = snapshot.calendars;
     let count: usize = snapshot.days.iter().map(|d| d.events.len()).sum();
     let days = ui.config.days_ahead + 1;
-    ui.status.set_text(&format!(
-        "{} · {} {} · {}",
-        snapshot.start,
-        days,
-        if days == 1 { "day" } else { "days" },
-        snapshot.timezone
-    ));
+    if ui.stack.visible_child_name().as_deref() != Some("tasks") {
+        ui.status.set_text(&format!(
+            "{} · {} {} · {}",
+            snapshot.start,
+            days,
+            if days == 1 { "day" } else { "days" },
+            snapshot.timezone
+        ));
+    }
     if count == 0 {
         ui.agenda.append(&label(
             if ui
@@ -247,6 +255,152 @@ fn render(ui: &mut Ui, snapshot: Snapshot) {
             expander.set_child(Some(&details));
             ui.agenda.append(&expander);
         }
+    }
+}
+fn todo_path(text: &str) -> std::path::PathBuf {
+    if let Some(rest) = text.strip_prefix("~/") {
+        std::path::PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(rest)
+    } else {
+        text.into()
+    }
+}
+fn show_tasks(state: &State) {
+    let path = todo_path(&state.borrow().config.todo_file);
+    let result = tasks::Document::load(&path);
+    let mut ui = state.borrow_mut();
+    ui.stack.set_visible_child_name("tasks");
+    ui.tasks_button.set_visible(true);
+    match result {
+        Ok(doc) => {
+            ui.document = Some(doc);
+            ui.status.set_text("Tasks · todo.txt");
+        }
+        Err(e) => {
+            ui.document = None;
+            ui.status.set_text(&e.to_string());
+        }
+    }
+    drop(ui);
+    render_tasks(state);
+}
+fn render_tasks(state: &State) {
+    let ui = state.borrow();
+    clear(&ui.tasks_box);
+    let filter = gtk::Entry::builder()
+        .placeholder_text("Filter: text, (A), @context, +project")
+        .text(&ui.task_filter)
+        .build();
+    ui.tasks_box.append(&filter);
+    let st = state.clone();
+    filter.connect_activate(move |entry| {
+        st.borrow_mut().task_filter = entry.text().to_string();
+        render_tasks(&st);
+    });
+    let completed_row = row(12);
+    let text = label("Show completed tasks", "subtitle");
+    text.set_hexpand(true);
+    completed_row.append(&text);
+    let completed = gtk::Switch::builder().active(ui.show_completed).build();
+    completed_row.append(&completed);
+    ui.tasks_box.append(&completed_row);
+    let st = state.clone();
+    completed.connect_active_notify(move |b| {
+        st.borrow_mut().show_completed = b.is_active();
+        render_tasks(&st);
+    });
+    let add_row = row(6);
+    let entry = gtk::Entry::builder()
+        .placeholder_text("New task, including priority or tags")
+        .hexpand(true)
+        .build();
+    let add = gtk::Button::with_label("Add");
+    add_row.append(&entry);
+    add_row.append(&add);
+    ui.tasks_box.append(&add_row);
+    let st = state.clone();
+    let input = entry.clone();
+    add.connect_clicked(move |_| task_save(&st, None, input.text().as_str()));
+    let st = state.clone();
+    entry.connect_activate(move |e| task_save(&st, None, e.text().as_str()));
+    let Some(doc) = &ui.document else {
+        ui.tasks_box.append(&label(
+            "Select an existing todo.txt file in Settings.",
+            "dim",
+        ));
+        return;
+    };
+    let mut count = 0;
+    for (i, raw) in doc.lines.iter().enumerate() {
+        let text = raw.trim_end_matches(['\r', '\n']);
+        let done = text.starts_with("x ");
+        if text.trim().is_empty()
+            || (done && !ui.show_completed)
+            || !text.to_lowercase().contains(&ui.task_filter.to_lowercase())
+        {
+            continue;
+        }
+        count += 1;
+        let r = column(6);
+        r.add_css_class("event");
+        let input = gtk::Entry::builder().text(text).hexpand(true).build();
+        r.append(&input);
+        let controls = row(6);
+        let save = gtk::Button::with_label("Save task");
+        let complete = gtk::Button::with_label(if done { "Reopen task" } else { "Complete task" });
+        controls.append(&save);
+        controls.append(&complete);
+        r.append(&controls);
+        ui.tasks_box.append(&r);
+        let st = state.clone();
+        let e = input.clone();
+        save.connect_clicked(move |_| task_save(&st, Some(i), e.text().as_str()));
+        let st = state.clone();
+        complete.connect_clicked(move |_| {
+            let value = input.text();
+            let updated = if done {
+                let rest = value.strip_prefix("x ").unwrap_or(&value);
+                if rest.len() >= 11
+                    && rest.as_bytes()[..10]
+                        .iter()
+                        .all(|b| b.is_ascii_digit() || *b == b'-')
+                    && rest.as_bytes()[4] == b'-'
+                    && rest.as_bytes()[7] == b'-'
+                    && rest.as_bytes()[10] == b' '
+                {
+                    rest[11..].to_owned()
+                } else {
+                    rest.to_owned()
+                }
+            } else {
+                let date = glib::DateTime::now_local()
+                    .and_then(|d| d.format("%Y-%m-%d"))
+                    .map(|d| d.to_string())
+                    .unwrap_or_default();
+                format!("x {date} {value}")
+            };
+            task_save(&st, Some(i), &updated);
+        });
+    }
+    if count == 0 {
+        ui.tasks_box.append(&label("No matching tasks.", "dim"));
+    }
+}
+fn task_save(state: &State, index: Option<usize>, text: &str) {
+    let result = state
+        .borrow_mut()
+        .document
+        .as_mut()
+        .map(|doc| doc.save(index, text));
+    match result {
+        Some(Ok(())) => {
+            state.borrow().status.set_text("Task saved");
+            render_tasks(state);
+        }
+        Some(Err(e)) => state.borrow().status.set_text(&e.to_string()),
+        None => state
+            .borrow()
+            .status
+            .set_text("Choose a readable todo.txt file first."),
     }
 }
 fn settings(state: &State) {
@@ -326,6 +480,66 @@ fn settings(state: &State) {
         drop(u);
         persist(&st);
     });
+    let r = row(12);
+    let text = label("Enable tasks", "subtitle");
+    text.set_hexpand(true);
+    r.append(&text);
+    let toggle = gtk::Switch::builder()
+        .active(ui.config.tasks_enabled)
+        .build();
+    r.append(&toggle);
+    ui.settings.append(&r);
+    let st = state.clone();
+    toggle.connect_active_notify(move |toggle| {
+        let mut u = st.borrow_mut();
+        u.config.tasks_enabled = toggle.is_active();
+        u.tasks_button.set_visible(toggle.is_active());
+        drop(u);
+        persist(&st);
+    });
+    ui.settings.append(&label("todo.txt file", "subtitle"));
+    let path_row = row(6);
+    let path = gtk::Entry::builder()
+        .text(&ui.config.todo_file)
+        .hexpand(true)
+        .build();
+    let apply = gtk::Button::with_label("Apply path");
+    path_row.append(&path);
+    path_row.append(&apply);
+    let browse = gtk::Button::with_label("Browse");
+    path_row.append(&browse);
+    ui.settings.append(&path_row);
+    let st = state.clone();
+    let st_browse = state.clone();
+    let path_input = path.clone();
+    browse.connect_clicked(move |button| {
+        let parent = button.root().and_downcast::<gtk::Window>();
+        let chooser = gtk::FileChooserNative::new(
+            Some("Choose todo.txt"),
+            parent.as_ref(),
+            gtk::FileChooserAction::Open,
+            Some("Choose"),
+            Some("Cancel"),
+        );
+        let st = st_browse.clone();
+        let input = path_input.clone();
+        chooser.connect_response(move |chooser, response| {
+            if response == gtk::ResponseType::Accept
+                && let Some(path) = chooser.file().and_then(|f| f.path())
+            {
+                let text = path.to_string_lossy().to_string();
+                input.set_text(&text);
+                st.borrow_mut().config.todo_file = text;
+                persist(&st);
+            }
+            chooser.destroy();
+        });
+        chooser.show();
+    });
+    apply.connect_clicked(move |_| {
+        st.borrow_mut().config.todo_file = path.text().to_string();
+        persist(&st);
+    });
     ui.settings.append(&label("Calendars", "day"));
     if ui.calendars.is_empty() {
         ui.settings.append(&label(
@@ -364,7 +578,7 @@ fn settings(state: &State) {
     done.connect_clicked(move |_| stack.set_visible_child_name("agenda"));
     ui.stack.set_visible_child_name("settings");
 }
-fn build(app: &gtk::Application, config: Config, focused: bool) {
+fn build(app: &gtk::Application, config: Config, focused: bool, open_tasks: bool) -> State {
     let window = gtk::ApplicationWindow::builder()
         .application(app)
         .title("Khal Agenda")
@@ -428,7 +642,8 @@ fn build(app: &gtk::Application, config: Config, focused: bool) {
     header.add_css_class("header");
     let titles = column(4);
     titles.set_hexpand(true);
-    titles.append(&label("Your days ahead.", "title"));
+    let heading = label("Your days ahead.", "title");
+    titles.append(&heading);
     titles.append(&label("Khal Agenda", "dim"));
     header.append(&titles);
     let refresh = icon("view-refresh-symbolic", "Refresh");
@@ -465,6 +680,25 @@ fn build(app: &gtk::Application, config: Config, focused: bool) {
         .child(&settings_box)
         .build();
     stack.add_named(&sc, Some("settings"));
+    let tabs = row(8);
+    tabs.add_css_class("header");
+    let agenda_button = gtk::Button::with_label("Agenda");
+    let tasks_button = gtk::Button::with_label("Tasks");
+    tasks_button.set_visible(config.tasks_enabled || open_tasks);
+    tabs.append(&agenda_button);
+    tabs.append(&tasks_button);
+    tabs.set_visible(config.tasks_enabled || open_tasks);
+    panel.append(&tabs);
+    let tasks_box = column(8);
+    tasks_box.add_css_class("agenda");
+    let tasks_scroll = gtk::ScrolledWindow::builder()
+        .hscrollbar_policy(gtk::PolicyType::Never)
+        .min_content_height(300)
+        .max_content_height(580)
+        .propagate_natural_height(true)
+        .child(&tasks_box)
+        .build();
+    stack.add_named(&tasks_scroll, Some("tasks"));
     panel.append(&stack);
     let footer = row(8);
     footer.add_css_class("footer");
@@ -478,6 +712,11 @@ fn build(app: &gtk::Application, config: Config, focused: bool) {
     window.set_child(Some(&overlay));
     let gtk_settings = gtk::Settings::default();
     let state = Rc::new(RefCell::new(Ui {
+        tasks_box,
+        tasks_button: tasks_button.clone(),
+        document: None,
+        task_filter: String::new(),
+        show_completed: false,
         panel,
         config,
         stack,
@@ -494,14 +733,51 @@ fn build(app: &gtk::Application, config: Config, focused: bool) {
     }));
     theme(&state.borrow());
     let st = state.clone();
+    tasks_button.connect_clicked(move |_| show_tasks(&st));
+    let st = state.clone();
+    agenda_button.connect_clicked(move |_| {
+        st.borrow().stack.set_visible_child_name("agenda");
+    });
+    let tab_bar = tabs.clone();
+    state
+        .borrow()
+        .tasks_button
+        .connect_visible_notify(move |b| {
+            tab_bar.set_visible(b.is_visible());
+        });
+    let st = state.clone();
     preferences.connect_clicked(move |_| settings(&st));
     let st = state.clone();
-    refresh.connect_clicked(move |_| load(&st));
+    refresh.connect_clicked(move |_| {
+        if st.borrow().stack.visible_child_name().as_deref() == Some("tasks") {
+            show_tasks(&st);
+        } else {
+            load(&st);
+        }
+    });
     let st = state.clone();
     month.connect_day_selected(move |m| {
         st.borrow_mut().start = m.date().format("%Y-%m-%d").ok().map(String::from);
         load(&st);
     });
+    let heading_label = heading.clone();
+    state
+        .borrow()
+        .stack
+        .connect_visible_child_name_notify(move |stack| {
+            heading_label.set_text(if stack.visible_child_name().as_deref() == Some("tasks") {
+                "Your tasks."
+            } else {
+                "Your days ahead."
+            });
+        });
+    let today_button = today.clone();
+    state
+        .borrow()
+        .stack
+        .connect_visible_child_name_notify(move |stack| {
+            today_button.set_visible(stack.visible_child_name().as_deref() == Some("agenda"));
+        });
     let st = state.clone();
     today.connect_clicked(move |_| {
         if let Ok(now) = glib::DateTime::now_local() {
@@ -536,6 +812,10 @@ fn build(app: &gtk::Application, config: Config, focused: bool) {
     });
     window.present();
     load(&state);
+    if open_tasks {
+        show_tasks(&state);
+    }
+    state
 }
 fn main() -> glib::ExitCode {
     if std::env::var_os("WAYLAND_DISPLAY").is_some() {
@@ -567,11 +847,29 @@ fn main() -> glib::ExitCode {
         "Open on the focused monitor for keyboard shortcuts",
         None,
     );
+    app.add_main_option(
+        "tasks",
+        glib::Char::from(0),
+        glib::OptionFlags::NONE,
+        glib::OptionArg::None,
+        "Open todo.txt tasks directly",
+        None,
+    );
+    let current: Rc<RefCell<Option<State>>> = Rc::new(RefCell::new(None));
+    let task_mode = Rc::new(std::cell::Cell::new(false));
+    let mode = task_mode.clone();
+    let live = current.clone();
     let focused = Rc::new(std::cell::Cell::new(false));
     let flag = focused.clone();
     app.connect_command_line(move |app, command| {
+        mode.set(command.options_dict().contains("tasks"));
         flag.set(command.options_dict().contains("focused"));
         app.activate();
+        if mode.get()
+            && let Some(state) = live.borrow().as_ref()
+        {
+            show_tasks(state);
+        }
         glib::ExitCode::SUCCESS
     });
     app.connect_startup(|_| {
@@ -589,7 +887,8 @@ fn main() -> glib::ExitCode {
         if let Some(window) = app.active_window() {
             window.present();
         } else {
-            build(app, config.clone(), focused.get());
+            *current.borrow_mut() =
+                Some(build(app, config.clone(), focused.get(), task_mode.get()));
         }
     });
     app.run()

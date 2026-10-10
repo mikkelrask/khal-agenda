@@ -76,6 +76,43 @@ For a keyboard shortcut, bind `khal-agenda` in your compositor's configuration.
 The app runs only when invoked, and repeated launches reuse the open popup.
 The graphical environment and session bus must be present.
 
+## todo.txt tasks
+
+![Optional Tasks view, shown with synthetic data](docs/screenshots/tasks.png)
+
+Enable **Tasks** in Settings and choose your todo.txt file with **Browse**, or
+enter a path and click **Apply path**. The default is
+`~/Documents/todo/todo.txt`. Tasks are optional and disabled by default.
+The normal launch still opens the agenda. Open tasks directly with:
+
+```sh
+khal-agenda --tasks
+```
+
+This also works when the popup is already open, and can be combined with
+`--focused`. The flag exposes Tasks for that invocation without changing the
+saved enable toggle.
+
+Add tasks, edit their full todo.txt lines, mark them complete, or reopen them.
+Completion adds `x` and today's date; reopening removes that completion prefix.
+Priorities, creation dates, `@contexts`, `+projects`, and other metadata stay in
+the text. Completed tasks remain in the same file and are hidden by default;
+use **Show completed tasks** to view them. Enter text in the filter and press
+Enter to match a priority, context, project, or any other text.
+
+Refresh rereads the task file after changes from another device. Saves check
+that the file still matches the loaded version, preserve unaffected lines and
+line endings, and replace the file atomically. If the file has changed, saving
+is refused and the input stays visible so you can copy it before refreshing.
+Choose an existing UTF-8 file; the app does not sync, archive, or delete tasks.
+
+Advanced configuration:
+
+```toml
+tasks_enabled = true
+todo_file = "~/Documents/todo/todo.txt"
+```
+
 ## Preferences
 
 Settings saves to `~/.config/khal-agenda/config.toml` (or `XDG_CONFIG_HOME`).
@@ -117,3 +154,7 @@ MIT licensed.
 The **Top margin (px)** setting positions the popup below your bar. It accepts
 0–500 logical pixels, applies immediately, and is saved as `top_margin` in the
 app configuration. The default is 24 pixels.
+
+`python3 scripts/tasks-smoke.py` verifies task editing, completion, reopening,
+external-change protection, the settings toggle, and `--tasks` using a temporary
+todo.txt. Never run live tests while another Khal Agenda instance is open.

@@ -5,6 +5,8 @@ use std::path::PathBuf;
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
+    pub tasks_enabled: bool,
+    pub todo_file: String,
     pub top_margin: u32,
     pub days_ahead: u32,
     pub month_view: bool,
@@ -17,6 +19,8 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             days_ahead: 7,
+            tasks_enabled: false,
+            todo_file: "~/Documents/todo/todo.txt".into(),
             top_margin: 24,
             month_view: false,
             theme: "system".into(),
