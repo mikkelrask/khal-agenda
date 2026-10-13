@@ -46,7 +46,6 @@ struct Ui {
     tasks_box: gtk::Box,
     tasks_button: gtk::Button,
     document: Option<tasks::Document>,
-    task_filter: String,
     show_completed: bool,
     panel: gtk::Box,
     config: Config,
@@ -236,6 +235,13 @@ fn render(ui: &mut Ui, snapshot: Snapshot) {
         for event in day.events {
             let expander = gtk::Expander::new(None);
             expander.add_css_class("event");
+            expander.connect_expanded_notify(|event| {
+                if event.is_expanded() {
+                    event.add_css_class("current");
+                } else {
+                    event.remove_css_class("current");
+                }
+            });
             let heading = column(3);
             heading.append(&label(&event.time, "time"));
             heading.append(&label(&event.title, "event-title"));
@@ -288,42 +294,6 @@ fn show_tasks(state: &State) {
 fn render_tasks(state: &State) {
     let ui = state.borrow();
     clear(&ui.tasks_box);
-    let filter = gtk::Entry::builder()
-        .placeholder_text("Filter: text, (A), @context, +project")
-        .text(&ui.task_filter)
-        .build();
-    ui.tasks_box.append(&filter);
-    let st = state.clone();
-    filter.connect_activate(move |entry| {
-        st.borrow_mut().task_filter = entry.text().to_string();
-        render_tasks(&st);
-    });
-    let completed_row = row(12);
-    let text = label("Show completed tasks", "subtitle");
-    text.set_hexpand(true);
-    completed_row.append(&text);
-    let completed = gtk::Switch::builder().active(ui.show_completed).build();
-    completed_row.append(&completed);
-    ui.tasks_box.append(&completed_row);
-    let st = state.clone();
-    completed.connect_active_notify(move |b| {
-        st.borrow_mut().show_completed = b.is_active();
-        render_tasks(&st);
-    });
-    let add_row = row(6);
-    let entry = gtk::Entry::builder()
-        .placeholder_text("New task, including priority or tags")
-        .hexpand(true)
-        .build();
-    let add = gtk::Button::with_label("Add");
-    add_row.append(&entry);
-    add_row.append(&add);
-    ui.tasks_box.append(&add_row);
-    let st = state.clone();
-    let input = entry.clone();
-    add.connect_clicked(move |_| task_save(&st, None, input.text().as_str()));
-    let st = state.clone();
-    entry.connect_activate(move |e| task_save(&st, None, e.text().as_str()));
     let Some(doc) = &ui.document else {
         ui.tasks_box.append(&label(
             "Select an existing todo.txt file in Settings.",
@@ -331,79 +301,110 @@ fn render_tasks(state: &State) {
         ));
         return;
     };
+    let remaining = doc
+        .lines
+        .iter()
+        .filter(|line| !line.trim().is_empty() && !line.starts_with("x "))
+        .count();
+    let summary = row(12);
+    let count = label(&format!("{remaining} remaining"), "dim");
+    count.set_hexpand(true);
+    summary.append(&count);
+    let show_completed = label("Show completed tasks", "dim");
+    show_completed.set_wrap(false);
+    summary.append(&show_completed);
+    let completed = gtk::Switch::builder().active(ui.show_completed).build();
+    completed.set_tooltip_text(Some("Show completed tasks"));
+    summary.append(&completed);
+    ui.tasks_box.append(&summary);
+    let st = state.clone();
+    completed.connect_active_notify(move |b| {
+        st.borrow_mut().show_completed = b.is_active();
+        render_tasks(&st);
+    });
     let mut count = 0;
     for (i, raw) in doc.lines.iter().enumerate() {
-        let text = raw.trim_end_matches(['\r', '\n']);
-        let done = text.starts_with("x ");
-        if text.trim().is_empty()
-            || (done && !ui.show_completed)
-            || !text.to_lowercase().contains(&ui.task_filter.to_lowercase())
-        {
+        if raw.trim().is_empty() {
+            continue;
+        }
+        let task = tasks::Task::parse(raw);
+        if task.done && !ui.show_completed {
             continue;
         }
         count += 1;
-        let r = column(6);
-        r.add_css_class("event");
-        let input = gtk::Entry::builder().text(text).hexpand(true).build();
-        r.append(&input);
-        let controls = row(6);
-        let save = gtk::Button::with_label("Save task");
-        let complete = gtk::Button::with_label(if done { "Reopen task" } else { "Complete task" });
-        controls.append(&save);
-        controls.append(&complete);
-        r.append(&controls);
-        ui.tasks_box.append(&r);
+        let card = gtk::CheckButton::new();
+        card.add_css_class("event");
+        card.add_css_class("task");
+        card.set_active(task.done);
+        card.set_tooltip_text(Some(raw.trim_end_matches(['\r', '\n'])));
+        if task.done {
+            card.add_css_class("completed");
+        }
+        let content = column(5);
+        content.set_hexpand(true);
+        let heading = row(8);
+        if let Some(priority) = task.priority {
+            let badge = label(&priority.to_string(), "task-priority");
+            badge.set_valign(gtk::Align::Start);
+            heading.append(&badge);
+        }
+        let title = label(&task.title, "task-title");
+        title.set_hexpand(true);
+        heading.append(&title);
+        content.append(&heading);
+        if !task.metadata.is_empty() {
+            content.append(&label(&task.metadata.join(" · "), "task-tags"));
+        }
+        card.set_child(Some(&content));
+        ui.tasks_box.append(&card);
         let st = state.clone();
-        let e = input.clone();
-        save.connect_clicked(move |_| task_save(&st, Some(i), e.text().as_str()));
-        let st = state.clone();
-        complete.connect_clicked(move |_| {
-            let value = input.text();
-            let updated = if done {
-                let rest = value.strip_prefix("x ").unwrap_or(&value);
-                if rest.len() >= 11
-                    && rest.as_bytes()[..10]
-                        .iter()
-                        .all(|b| b.is_ascii_digit() || *b == b'-')
-                    && rest.as_bytes()[4] == b'-'
-                    && rest.as_bytes()[7] == b'-'
-                    && rest.as_bytes()[10] == b' '
-                {
-                    rest[11..].to_owned()
-                } else {
-                    rest.to_owned()
-                }
-            } else {
-                let date = glib::DateTime::now_local()
-                    .and_then(|d| d.format("%Y-%m-%d"))
-                    .map(|d| d.to_string())
-                    .unwrap_or_default();
-                format!("x {date} {value}")
-            };
-            task_save(&st, Some(i), &updated);
-        });
+        card.connect_toggled(move |check| task_complete(&st, i, check.is_active()));
     }
     if count == 0 {
-        ui.tasks_box.append(&label("No matching tasks.", "dim"));
+        ui.tasks_box.append(&label(
+            if doc.lines.iter().any(|line| !line.trim().is_empty()) {
+                "All caught up."
+            } else {
+                "No tasks in this file."
+            },
+            "dim",
+        ));
     }
 }
-fn task_save(state: &State, index: Option<usize>, text: &str) {
+fn task_complete(state: &State, index: usize, done: bool) {
+    let date = if done {
+        match glib::DateTime::now_local().and_then(|date| date.format("%Y-%m-%d")) {
+            Ok(date) => date.to_string(),
+            Err(e) => {
+                state
+                    .borrow()
+                    .status
+                    .set_text(&format!("Could not determine today's date: {e}"));
+                render_tasks(state);
+                return;
+            }
+        }
+    } else {
+        String::new()
+    };
     let result = state
         .borrow_mut()
         .document
         .as_mut()
-        .map(|doc| doc.save(index, text));
+        .map(|doc| doc.set_completed(index, done, &date));
     match result {
-        Some(Ok(())) => {
-            state.borrow().status.set_text("Task saved");
-            render_tasks(state);
-        }
+        Some(Ok(())) => state.borrow().status.set_text(if done {
+            "Task completed"
+        } else {
+            "Task reopened"
+        }),
         Some(Err(e)) => state.borrow().status.set_text(&e.to_string()),
         None => state
             .borrow()
             .status
             .set_text("Choose a readable todo.txt file first."),
     }
+    render_tasks(state);
 }
 fn settings(state: &State) {
     let ui = state.borrow();
@@ -709,8 +710,9 @@ fn build(app: &gtk::Application, config: Config, focused: bool, open_tasks: bool
         .build();
     stack.add_named(&sc, Some("settings"));
     let tabs = row(8);
-    tabs.add_css_class("header");
+    tabs.add_css_class("tabs");
     let agenda_button = gtk::Button::with_label("Agenda");
+    agenda_button.add_css_class("current");
     let tasks_button = gtk::Button::with_label("Tasks");
     tasks_button.set_visible(config.tasks_enabled || open_tasks);
     tabs.append(&agenda_button);
@@ -745,7 +747,6 @@ fn build(app: &gtk::Application, config: Config, focused: bool, open_tasks: bool
         tasks_box,
         tasks_button: tasks_button.clone(),
         document: None,
-        task_filter: String::new(),
         show_completed: false,
         panel,
         config,
@@ -806,7 +807,15 @@ fn build(app: &gtk::Application, config: Config, focused: bool, open_tasks: bool
         .borrow()
         .stack
         .connect_visible_child_name_notify(move |stack| {
-            today_button.set_visible(stack.visible_child_name().as_deref() == Some("agenda"));
+            let page = stack.visible_child_name();
+            today_button.set_visible(page.as_deref() == Some("agenda"));
+            for (name, button) in [("agenda", &agenda_button), ("tasks", &tasks_button)] {
+                if page.as_deref() == Some(name) {
+                    button.add_css_class("current");
+                } else {
+                    button.remove_css_class("current");
+                }
+            }
         });
     let st = state.clone();
     today.connect_clicked(move |_| {

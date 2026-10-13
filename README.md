@@ -95,18 +95,18 @@ This also works when the popup is already open, and can be combined with
 `--focused`. The flag exposes Tasks for that invocation without changing the
 saved enable toggle.
 
-Add tasks, edit their full todo.txt lines, mark them complete, or reopen them.
-Completion adds `x` and today's date; reopening removes that completion prefix.
-Priorities, creation dates, `@contexts`, `+projects`, and other metadata stay in
-the text. Completed tasks remain in the same file and are hidden by default;
-use **Show completed tasks** to view them. Enter text in the filter and press
-Enter to match a priority, context, project, or any other text.
+Tasks are shown as read-only cards, with priority badges and creation dates,
+`@contexts`, and `+projects` beneath the title. Click a card's checkbox (or focus
+it and press Space) to mark it complete. Completed tasks stay in the file and
+are hidden by default; enable **Show completed tasks** and uncheck one to reopen
+it. Add or edit tasks in your usual todo.txt editor, not in the popup.
 
-Refresh rereads the task file after changes from another device. Saves check
-that the file still matches the loaded version, preserve unaffected lines and
-line endings, and replace the file atomically. If the file has changed, saving
-is refused and the input stays visible so you can copy it before refreshing.
-Choose an existing UTF-8 file; the app does not sync, archive, or delete tasks.
+Completion adds `x` and today's date; reopening removes only that completion
+prefix. The original task text, metadata, unaffected lines, and line endings
+are preserved. Refresh rereads the file after changes from another device.
+Writes are atomic and refused if the file has changed; the checkbox resets and
+an error asks you to refresh. Choose an existing UTF-8 file; the app does not
+sync, archive, or delete tasks.
 
 Advanced configuration:
 
@@ -157,6 +157,8 @@ The **Top margin (px)** setting positions the popup below your bar. It accepts
 0–500 logical pixels, applies immediately, and is saved as `top_margin` in the
 app configuration. The default is 24 pixels.
 
-`python3 scripts/tasks-smoke.py` verifies task editing, completion, reopening,
+`python3 scripts/tasks-smoke.py` verifies read-only cards, completion, reopening,
 external-change protection, the settings toggle, and `--tasks` using a temporary
-todo.txt. Never run live tests while another Khal Agenda instance is open.
+todo.txt. On GTK versions without an AT-SPI checkbox action, it uses `wlrctl`
+for keyboard activation. Never run live tests while another Khal Agenda instance
+is open.

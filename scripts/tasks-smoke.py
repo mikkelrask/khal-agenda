@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Verify task writes using only a temporary file on a live Wayland session."""
+import datetime as dt
 import os
 from pathlib import Path
 import subprocess
@@ -31,16 +32,43 @@ def wait(f):
 def find(name,role=None): return next((n for n in nodes() if n.get_name()==name and (role is None or n.get_role_name()==role)),None)
 def click(name): assert wait(lambda:find(name,'push button') or find(name,'button')).get_action_iface().do_action(0)
 def entries():return [n for n in nodes() if n.get_role_name() in ('entry','text') and n.get_editable_text_iface() is not None]
-def input_with(text):return next((n for n in entries() if Atspi.Text.get_text(n,0,-1)==text),None)
+def task(title):
+    node=find(title,'label')
+    while node is not None and node.get_role_name()!='check box':node=node.get_parent()
+    return node
+def toggle_task(title):
+    checkbox=wait(lambda:task(title))
+    action=checkbox.get_action_iface()
+    if action.get_n_actions():
+        assert action.do_action(0)
+        return
+    # Recent GTK versions expose no AT-SPI checkbox action; exercise native keyboard activation.
+    for _ in range(20):
+        if task(title).get_state_set().contains(Atspi.StateType.FOCUSED):break
+        subprocess.run(['wlrctl','keyboard','type','\t'],check=True)
+        time.sleep(.05)
+    assert task(title).get_state_set().contains(Atspi.StateType.FOCUSED)
+    subprocess.run(['wlrctl','keyboard','type',' '],check=True)
+def toggle_completed():
+    text=wait(lambda:find('Show completed tasks','label'))
+    switch=next(n for n in walk(text.get_parent()) if n.get_role_name()=='switch')
+    assert switch.get_action_iface().do_action(0)
 with tempfile.TemporaryDirectory(prefix='khal-tasks-smoke-') as tmp:
-    root=Path(tmp);todo=root/'todo.txt';todo.write_text('(A) Test task @home +demo\nx 2026-10-09 Finished\n')
-    config=root/'khal-agenda/config.toml';config.parent.mkdir();config.write_text(f'todo_file = "{todo}"\n')
+    root=Path(tmp);todo=root/'todo.txt'
+    original='(A) 2026-10-01 Plan weekend trip @home +travel\n(B) Book bike service @town +errands\nBuy coffee beans for the weekend @town +shopping\nx 2026-10-09 Finished\n'
+    todo.write_text(original)
+    config=root/'khal-agenda/config.toml';config.parent.mkdir();config.write_text(f'todo_file = "{todo}"\ntheme = "{os.environ.get("KHAL_AGENDA_THEME", "system")}"\n')
     env=dict(os.environ,XDG_CONFIG_HOME=tmp)
     with (root/'app.log').open('w') as log:
         p=subprocess.Popen([str(ROOT/'target/release/khal-agenda'),'--tasks'],env=env,stdout=log,stderr=log)
         try:
-            wait(lambda:find('Complete task'))
-            assert not find('Reopen task')
+            wait(lambda:task('Plan weekend trip'))
+            assert not find('Finished')
+            assert not entries(), 'Task view must have no text inputs'
+            for name in ('Add','Save task','Complete task','Reopen task'):assert not find(name)
+            assert find('A','label') and find('B','label')
+            assert find('Created 2026-10-01 · @home · +travel','label')
+            assert task('Plan weekend trip').get_name(), 'Checkbox must have an accessible name'
             if os.environ.get('KHAL_TASKS_SCREENSHOT'):
                 import json
                 title = find('Your tasks.', 'label')
@@ -49,22 +77,28 @@ with tempfile.TemporaryDirectory(prefix='khal-tasks-smoke-') as tmp:
                 monitor = next(m for m in json.loads(subprocess.check_output(['mmsg','get','all-monitors'],text=True))['monitors'] if m['active'])
                 x = monitor['x']+monitor['width']-16-rect.width
                 subprocess.run(['grim','-g',f"{x},{monitor['y']+24} {rect.width}x{rect.height}",os.environ['KHAL_TASKS_SCREENSHOT']],check=True)
-            edit=wait(lambda:input_with('(A) Test task @home +demo'))
-            assert edit.get_editable_text_iface().set_text_contents('(B) Edited task @work +demo')
-            click('Save task');wait(lambda:'(B) Edited task' in todo.read_text())
-            click('Complete task');wait(lambda:todo.read_text().startswith('x '))
-            done=wait(lambda:find('Show completed tasks','label'));switch=next(n for n in walk(done.get_parent()) if n.get_role_name()=='switch');assert switch.get_action_iface().do_action(0)
-            wait(lambda:find('Reopen task'))
-            reopen=[n for n in nodes() if n.get_name()=='Reopen task'][0];assert reopen.get_action_iface().do_action(0)
-            wait(lambda:todo.read_text().startswith('(B) Edited task'))
-            empty=[n for n in entries() if Atspi.Text.get_text(n,0,-1)==''];assert empty[-1].get_editable_text_iface().set_text_contents('Added @home')
-            click('Add');wait(lambda:'Added @home' in todo.read_text())
-            # A concurrent edit must never be silently overwritten.
+            toggle_task('Plan weekend trip')
+            wait(lambda:todo.read_text()==f'x {dt.date.today()} {original}')
+            wait(lambda:find('2 remaining','label'))
+            assert not task('Plan weekend trip')
+            toggle_completed()
+            completed=wait(lambda:task('Plan weekend trip'))
+            assert completed.get_state_set().contains(Atspi.StateType.CHECKED)
+            toggle_task('Plan weekend trip');wait(lambda:todo.read_text()==original)
+            toggle_completed()
+            for title in ('Plan weekend trip','Book bike service','Buy coffee beans for the weekend'):
+                toggle_task(title)
+                wait(lambda title=title:task(title) is None)
+            wait(lambda:find('All caught up.','label'))
+            toggle_completed()
+            toggle_task('Plan weekend trip');wait(lambda:todo.read_text().startswith('(A)'))
+            # A concurrent edit must never be silently overwritten, and the checkbox must reset.
             todo.write_text('External edit @sync\n')
-            saves=[n for n in nodes() if n.get_name()=='Save task'];assert saves[0].get_action_iface().do_action(0)
+            toggle_task('Plan weekend trip')
             wait(lambda:any('changed elsewhere' in n.get_name() for n in nodes()))
             assert todo.read_text()=='External edit @sync\n'
-            click('Refresh');wait(lambda:input_with('External edit @sync'))
+            assert not task('Plan weekend trip').get_state_set().contains(Atspi.StateType.CHECKED)
+            click('Refresh');wait(lambda:task('External edit'))
             click('Settings');wait(lambda:find('Enable tasks'))
             text=find('Enable tasks');switch=next(n for n in walk(text.get_parent()) if n.get_role_name()=='switch');assert switch.get_action_iface().do_action(0)
             wait(lambda:tomllib.loads(config.read_text()).get('tasks_enabled'))
@@ -82,10 +116,10 @@ with tempfile.TemporaryDirectory(prefix='khal-tasks-smoke-') as tmp:
             assert choose.get_action_iface().do_action(0)
             wait(lambda:find('Browse'));assert p.poll() is None
             assert tomllib.loads(config.read_text())['todo_file']==str(alternate)
-            click('Done');click('Tasks');wait(lambda:input_with('External edit @sync'))
+            click('Done');click('Tasks');wait(lambda:task('External edit'))
             subprocess.run([str(ROOT/'target/release/khal-agenda'),'--tasks'],env=env,check=True)
             click('Close');p.wait(timeout=5);assert p.returncode==0
         finally:
             if p.poll() is None:p.terminate();p.wait(timeout=5)
     errors=(root/'app.log').read_text();assert 'panicked' not in errors and 'CRITICAL' not in errors,errors
-print('PASS: task edit, completion, reopen, add, external-change protection, refresh, toggle, file chooser cancel/accept and --tasks activation')
+print('PASS: read-only task cards, metadata, accessible checkboxes, completion/reopen, empty state, external-change protection, refresh, toggle, file chooser cancel/accept and --tasks activation')
